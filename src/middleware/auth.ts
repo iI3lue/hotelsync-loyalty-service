@@ -23,7 +23,13 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
   try {
     const decoded = jwt.verify(token, process.env.AUTH_JWT_SECRET!) as any;
     // Adaptar según tu payload JWT. Usualmente Auth0 o tu user-service inyecta el ID en `sub` o `userId`.
-    req.user = { userId: decoded.userId || decoded.sub, role: decoded.role || "GUEST" };
+    const userId = decoded.userId || decoded.sub;
+    // Los user_id son UUID: cualquier otro valor es un token ajeno y no
+    // debe llegar a Prisma (la columna uuid revienta con 500).
+    if (typeof userId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      return next(new AppError(401, "Unauthorized", "Invalid token"));
+    }
+    req.user = { userId, role: decoded.role || "GUEST" };
     next();
   } catch (error) {
     next(new AppError(401, "Unauthorized", "Invalid token"));
