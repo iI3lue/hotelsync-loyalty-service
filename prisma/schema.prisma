@@ -1,0 +1,42 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model LoyaltyAccount {
+  account_id     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String   @unique @db.Uuid
+  tier           String   @default("silver")
+  points_balance Int      @default(0)
+  created_at     DateTime @default(now()) @db.Timestamptz
+  updated_at     DateTime @updatedAt @db.Timestamptz
+  @@map("loyalty_accounts")
+}
+
+model PointsTransaction {
+  transaction_id String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String   @db.Uuid
+  type           String
+  points         Int
+  booking_id     String?  @unique @db.Uuid
+  reason         String   @db.VarChar(200)
+  created_at     DateTime @default(now()) @db.Timestamptz
+  @@index([user_id, created_at(sort: Desc)])
+  @@map("points_transactions")
+}
+
+model EventOutbox {
+  event_id   String    @id @db.Uuid
+  event_type String    @db.VarChar(50)
+  payload    Json
+  status     String    @default("pending") @db.VarChar(20)
+  attempts   Int       @default(0)
+  created_at DateTime  @default(now()) @db.Timestamptz
+  sent_at    DateTime? @db.Timestamptz
+  @@index([status, created_at])
+  @@map("event_outbox")
+}
