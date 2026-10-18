@@ -11,3 +11,7 @@ export const AdjustPointsSchema = z.object({
   reason: z.string().min(5).max(200),
   booking_id: z.string().uuid().optional(),
 });
+
+export const BookingIdParamSchema = z.object({
+  bookingId: z.string().uuid("El ID de reserva debe ser un UUID válido"),
+});

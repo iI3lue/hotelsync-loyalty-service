@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma";
-import { processRedeem } from "../services/loyalty.service";
+import { getBookingPoints as getBookingPointsForUser, processRedeem } from "../services/loyalty.service";
 
 export const getMyLoyalty = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -29,5 +29,14 @@ export const redeemPoints = async (req: Request, res: Response, next: NextFuncti
     const { points, reason } = req.body;
     const transaction = await processRedeem(userId, points, reason);
     res.json({ data: transaction });
+  } catch (error) { next(error); }
+};
+
+export const getBookingPoints = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId;
+    const { bookingId } = req.params;
+    const points = await getBookingPointsForUser(userId, bookingId);
+    res.json({ data: points });
   } catch (error) { next(error); }
 };

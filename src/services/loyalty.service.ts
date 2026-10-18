@@ -9,18 +9,23 @@ const TIERS = {
 
 type Tier = keyof typeof TIERS;
 
-function determineTier(balance: number, currentTier: Tier): Tier {
-  let newTier: Tier = "silver";
-  if (balance >= TIERS.platinum.min) newTier = "platinum";
-  else if (balance >= TIERS.gold.min) newTier = "gold";
+function tierForBalance(balance: number): Tier {
+  if (balance >= TIERS.platinum.min) return "platinum";
+  if (balance >= TIERS.gold.min) return "gold";
+  return "silver";
+}
 
+function determineTier(balance: number, currentTier: Tier): Tier {
+  const newTier = tierForBalance(balance);
   const order = { silver: 1, gold: 2, platinum: 3 };
   return order[newTier] > order[currentTier] ? newTier : currentTier;
 }
 
 export async function processEarn(userId: string, bookingId: string, totalAmount: number) {
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.pointsTransaction.findUnique({ where: { booking_id: bookingId } });
+    const existing = await tx.pointsTransaction.findUnique({
+      where: { booking_id_type: { booking_id: bookingId, type: "earn" } },
+    });
     if (existing) return existing;
 
     let account = await tx.loyaltyAccount.findUnique({ where: { user_id: userId } });
@@ -74,4 +79,66 @@ export async function processRedeem(
       },
     });
   });
+}
+
+/**
+ * Revierte los puntos acreditados al cancelarse una reserva pagada.
+ * Idempotente por (booking_id, "reverse"). El saldo nunca queda negativo:
+ * lo ya canjeado no se revierte. El tier se recalcula (admite downgrade).
+ */
+export async function processReversal(bookingId: string) {
+  return prisma.$transaction(async (tx) => {
+    const earned = await tx.pointsTransaction.findUnique({
+      where: { booking_id_type: { booking_id: bookingId, type: "earn" } },
+    });
+    if (!earned) return null;
+
+    const alreadyReversed = await tx.pointsTransaction.findUnique({
+      where: { booking_id_type: { booking_id: bookingId, type: "reverse" } },
+    });
+    if (alreadyReversed) return alreadyReversed;
+
+    const account = await tx.loyaltyAccount.findUnique({
+      where: { user_id: earned.user_id },
+    });
+    if (!account) return null;
+
+    const pointsToReverse = Math.min(earned.points, account.points_balance);
+    const newBalance = account.points_balance - pointsToReverse;
+
+    await tx.loyaltyAccount.update({
+      where: { user_id: earned.user_id },
+      data: { points_balance: newBalance, tier: tierForBalance(newBalance) },
+    });
+
+    return tx.pointsTransaction.create({
+      data: {
+        user_id: earned.user_id,
+        type: "reverse",
+        points: pointsToReverse,
+        booking_id: bookingId,
+        reason: `Reversal booking ${bookingId}`,
+      },
+    });
+  });
+}
+
+/** Puntos de una reserva para el dueño de la cuenta (earn + reversal si existe). */
+export async function getBookingPoints(userId: string, bookingId: string) {
+  const transactions = await prisma.pointsTransaction.findMany({
+    where: {
+      user_id: userId,
+      booking_id: bookingId,
+      type: { in: ["earn", "reverse"] },
+    },
+    orderBy: { created_at: "asc" },
+  });
+
+  const earn = transactions.find((t) => t.type === "earn");
+  if (!earn) return null;
+
+  return {
+    earn,
+    reverse: transactions.find((t) => t.type === "reverse") ?? null,
+  };
 }
