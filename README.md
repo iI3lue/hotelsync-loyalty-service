@@ -38,7 +38,15 @@ Node.js ≥20 · TypeScript · Express · Prisma · PostgreSQL 16 · Zod · Rabb
 
 Tablas: `LoyaltyAccount`, `PointsTransaction`, `EventOutbox`.
 
-Migraciones en `prisma/migrations` (1). El seed está vacío: las cuentas y transacciones nacen de los eventos de estancia y de los ajustes manuales.
+Migraciones en `prisma/migrations` (1). El seed (`npm run seed`) es idempotente y crea tres cuentas demo, una por nivel, con su historial de transacciones:
+
+| `user_id` | Nivel | Saldo | Uso |
+| --- | --- | --- | --- |
+| `11111111-1111-4111-8111-111111111111` | `silver` | 450 | Cuenta recién iniciada |
+| `22222222-2222-4222-8222-222222222222` | `gold` | 1.850 | Cliente frecuente |
+| `33333333-3333-4333-8333-333333333333` | `platinum` | 7.300 | Incluye un canje de 500 |
+
+Esos UUID no tienen que existir en user-service para consultarlos con `GET /v1/admin/users/:userId/loyalty`; en una reserva real el `user_id` proviene del JWT. Volver a ejecutar el seed restaura el estado demo sin duplicar transacciones.
 
 ## Comunicación
 
@@ -67,10 +75,9 @@ Copiar `.env.example` a `.env` y completar los valores.
 npm install
 cp .env.example .env
 npx prisma migrate deploy
+npm run seed
 npm run dev                 # http://localhost:3009
 ```
-
-No hay script `seed` en este repo: el seed no inserta datos.
 
 ## Despliegue
 
