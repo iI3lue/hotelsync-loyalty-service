@@ -1,6 +1,6 @@
 # HotelSync — Loyalty Service
 
-Microservicio de fidelización de HotelSync: niveles, acumulación de puntos por estancia y canje.
+Microservicio de fidelización de HotelSync: niveles, acumulación de puntos por estancia, acreditación al pago, reversión al cancelar y canje.
 
 - **Producción:** https://hotelsync-loyalty-service.onrender.com
 - **Puerto local:** 3009
@@ -11,7 +11,7 @@ Microservicio de fidelización de HotelSync: niveles, acumulación de puntos por
 | Hace | No hace |
 | --- | --- |
 | Mantener cuentas de fidelidad y transacciones de puntos | Autenticar usuarios (consume el JWT de user-service) |
-| Acreditar puntos al recibir `booking.completed` | Gestionar reservas o estadías |
+| Acreditar puntos al pagarse (`payment.completed`) y revertirlos al cancelar (`booking.cancelled`) | Gestionar reservas o estadías |
 | Permitir canje de puntos | Cobrar ni facturar |
 | Ofrecer ajustes manuales de staff | Ser dueño del catálogo de niveles de otros servicios |
 
@@ -21,7 +21,7 @@ Node.js ≥20 · TypeScript · Express · Prisma · PostgreSQL 16 · Zod · Rabb
 
 ## Arquitectura interna
 
-`Route → Controller → Service → Prisma`, con Zod y `AppError`. El consumo de `booking.completed` (cola durable `loyalty.points`) es idempotente por reserva: valida la reserva y el usuario contra Booking y user-service, calcula los puntos y registra la transacción.
+`Route → Controller → Service → Prisma`, con Zod y `AppError`. El consumidor (cola durable `loyalty.points`) atiende `payment.completed` (acredita), `booking.cancelled` (revierte) y `booking.completed` (acreditación de respaldo). Acreditación y reversión son idempotentes por (reserva, tipo) gracias al índice único `(booking_id, type)`, y la reversión nunca deja el saldo negativo. En cada caso valida la reserva y el usuario contra Booking y user-service, calcula los puntos con el multiplicador del nivel vigente y registra la transacción.
 
 ## Endpoints
 
@@ -31,6 +31,7 @@ Node.js ≥20 · TypeScript · Express · Prisma · PostgreSQL 16 · Zod · Rabb
 | GET | `/v1/levels` | — | Niveles de fidelidad |
 | GET | `/v1/me` | JWT | Mi cuenta y saldo de puntos |
 | POST | `/v1/me/redeem` | JWT | Canjea puntos |
+| GET | `/v1/me/bookings/:bookingId/points` | JWT | Puntos de una reserva propia (earn y su reversión) |
 | GET | `/v1/admin/users/:userId/loyalty` | JWT + SUPER_ADMIN / MANAGER / ADMIN | Cuenta de un usuario |
 | POST | `/v1/admin/points` | JWT + staff directivo | Ajuste manual de puntos |
 
@@ -38,7 +39,7 @@ Node.js ≥20 · TypeScript · Express · Prisma · PostgreSQL 16 · Zod · Rabb
 
 Tablas: `LoyaltyAccount`, `PointsTransaction`, `EventOutbox`.
 
-Migraciones en `prisma/migrations` (1). El seed (`npm run seed`) es idempotente y crea tres cuentas demo, una por nivel, con su historial de transacciones:
+Migraciones en `prisma/migrations` (2); la última agrega el índice único `(booking_id, type)`. El seed (`npm run seed`) es idempotente y crea tres cuentas demo, una por nivel, con su historial de transacciones:
 
 | `user_id` | Nivel | Saldo | Uso |
 | --- | --- | --- | --- |
@@ -50,7 +51,7 @@ Esos UUID no tienen que existir en user-service para consultarlos con `GET /v1/a
 
 ## Comunicación
 
-- **Consume:** `booking.completed` (cola durable `loyalty.points`).
+- **Consume:** `payment.completed` (acredita), `booking.cancelled` (revierte) y `booking.completed` (respaldo) — cola durable `loyalty.points`.
 - **REST saliente:** Booking `GET /v1/bookings/:id` y user-service `GET /v1/users/internal/:id`, ambos con header `x-loyalty-key`.
 - No publica eventos.
 
