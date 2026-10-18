@@ -1,22 +1,100 @@
-# hotelsync-loyalty-service
+# HotelSync — Loyalty Service
 
-HotelSync loyalty microservice (tiers, points, earn and redeem). Part of the HotelSync platform - one repo per microservice.
+Microservicio de fidelización de HotelSync: niveles, acumulación de puntos por estancia y canje.
+
+- **Producción:** https://hotelsync-loyalty-service.onrender.com
+- **Puerto local:** 3009
+- **Base de datos:** `loyalty_db` (PostgreSQL 16)
+
+## Responsabilidad
+
+| Hace | No hace |
+| --- | --- |
+| Mantener cuentas de fidelidad y transacciones de puntos | Autenticar usuarios (consume el JWT de user-service) |
+| Acreditar puntos al recibir `booking.completed` | Gestionar reservas o estadías |
+| Permitir canje de puntos | Cobrar ni facturar |
+| Ofrecer ajustes manuales de staff | Ser dueño del catálogo de niveles de otros servicios |
+
+## Tecnologías
+
+Node.js ≥20 · TypeScript · Express · Prisma · PostgreSQL 16 · Zod · RabbitMQ (consumidor de eventos).
+
+## Arquitectura interna
+
+`Route → Controller → Service → Prisma`, con Zod y `AppError`. El consumo de `booking.completed` (cola durable `loyalty.points`) es idempotente por reserva: valida la reserva y el usuario contra Booking y user-service, calcula los puntos y registra la transacción.
 
 ## Endpoints
 
-- `GET /v1/me` - loyalty account + recent transactions (auto-creates silver/0 account)
-- `POST /v1/me/redeem` - redeem points `{ points, reason }`
-- `GET /v1/levels` - public tier levels and multipliers
-- `GET /health` - health check
+| Método | Ruta | Auth | Descripción |
+| --- | --- | --- | --- |
+| GET | `/health` | — | Estado del servicio |
+| GET | `/v1/levels` | — | Niveles de fidelidad |
+| GET | `/v1/me` | JWT | Mi cuenta y saldo de puntos |
+| POST | `/v1/me/redeem` | JWT | Canjea puntos |
+| GET | `/v1/admin/users/:userId/loyalty` | JWT + SUPER_ADMIN / MANAGER / ADMIN | Cuenta de un usuario |
+| POST | `/v1/admin/points` | JWT + staff directivo | Ajuste manual de puntos |
 
-Auth is HS256 (`AUTH_JWT_SECRET`, must be identical to user-service). Consumes `booking.completed` from RabbitMQ to earn points.
+## Modelo de datos
 
-## Local dev
+Tablas: `LoyaltyAccount`, `PointsTransaction`, `EventOutbox`.
+
+Migraciones en `prisma/migrations` (1). El seed está vacío: las cuentas y transacciones nacen de los eventos de estancia y de los ajustes manuales.
+
+## Comunicación
+
+- **Consume:** `booking.completed` (cola durable `loyalty.points`).
+- **REST saliente:** Booking `GET /v1/bookings/:id` y user-service `GET /v1/users/internal/:id`, ambos con header `x-loyalty-key`.
+- No publica eventos.
+
+## Variables de entorno
+
+| Variable | Obligatoria | Descripción |
+| --- | --- | --- |
+| `NODE_ENV` | No | `development` / `production` |
+| `PORT` | No | Puerto HTTP (default 3009) |
+| `DATABASE_URL` | Sí | PostgreSQL de `loyalty_db` |
+| `AUTH_JWT_SECRET` | Sí | HS256 compartido |
+| `LOYALTY_SERVICE_KEY` | Sí | Clave interna hacia Booking y user-service |
+| `BOOKING_SERVICE_URL` | Sí | Base de booking-service |
+| `USER_SERVICE_URL` | Sí | Base de user-service |
+| `RABBITMQ_URL` | No | Sin ella no se acreditan puntos por eventos |
+
+Copiar `.env.example` a `.env` y completar los valores.
+
+## Ejecución local
 
 ```bash
 npm install
-npx prisma generate
-npm run dev
+cp .env.example .env
+npx prisma migrate deploy
+npm run dev                 # http://localhost:3009
 ```
 
-Required env (see monorepo `services/loyalty-service/.env.example`): `DATABASE_URL`, `AUTH_JWT_SECRET`, `BOOKING_SERVICE_URL`, `USER_SERVICE_URL`, `RABBITMQ_URL`.
+No hay script `seed` en este repo: el seed no inserta datos.
+
+## Despliegue
+
+Render (Oregon, free): build `npm ci && npx prisma generate && npm run build`; start `npx prisma migrate deploy && npm start`; Neon `loyalty_db`. El plan free duerme a los 15 minutos. El front enruta `/api/loyalty/*` a este servicio.
+
+## Pruebas y verificación
+
+```bash
+npm test
+npm run lint
+curl https://hotelsync-loyalty-service.onrender.com/health
+```
+
+## Respaldo de base de datos
+
+```bash
+pg_dump "$DATABASE_URL" -Fc -f loyalty_db.dump
+pg_restore --clean --if-exists -d "$DATABASE_URL" loyalty_db.dump
+```
+
+## Estructura
+
+```
+src/{routes,controllers,services,validators,middleware,lib}
+prisma/{schema.prisma,seed.ts,migrations}
+tests/
+```
