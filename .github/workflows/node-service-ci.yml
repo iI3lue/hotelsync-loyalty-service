@@ -1,0 +1,97 @@
+name: Node service CI
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: "Service name used in labels and artifacts"
+        required: true
+        type: string
+      db_name:
+        description: "PostgreSQL database name used by the service"
+        required: true
+        type: string
+      fail_on_purpose:
+        description: "Force a controlled failure to demonstrate the red path"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CI_POSTGRES_PASSWORD:
+        description: "Password for the ephemeral CI PostgreSQL container"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test-build:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ${{ inputs.db_name }}
+          POSTGRES_USER: hotelsync
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hotelsync -d $POSTGRES_DB"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://hotelsync:${{ secrets.CI_POSTGRES_PASSWORD }}@localhost:5432/${{ inputs.db_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
+      - name: Type-check
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test -- --ci --runInBand --coverage
+
+      - name: Upload coverage
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ inputs.service_name }}
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Controlled failure (workflow_dispatch only)
+        if: ${{ inputs.fail_on_purpose == true }}
+        run: |
+          echo "Controlled failure requested: the pipeline must turn red."
+          exit 1

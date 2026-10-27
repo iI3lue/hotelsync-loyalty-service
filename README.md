@@ -1,10 +1,16 @@
 # HotelSync — Loyalty Service
 
+[![CI](https://github.com/iI3lue/hotelsync-loyalty-service/actions/workflows/ci.yml/badge.svg)](https://github.com/iI3lue/hotelsync-loyalty-service/actions/workflows/ci.yml)
+
 Microservicio de fidelización de HotelSync: niveles, acumulación de puntos por estancia, acreditación al pago, reversión al cancelar y canje.
 
 - **Producción:** https://hotelsync-loyalty-service.onrender.com
 - **Puerto local:** 3009
 - **Base de datos:** `loyalty_db` (PostgreSQL 16)
+
+## CI reutilizable
+
+El pipeline vive en `.github/workflows/node-service-ci.yml` como workflow reusable (`workflow_call`). Este repositorio lo invoca de forma local; `hotelsync-payment-service` y `hotelsync-analytics-service` lo consumen a través del tag `ci-v1`. Los inputs son `service_name`, `db_name` y `fail_on_purpose`; el único secreto es `CI_POSTGRES_PASSWORD`. La base PostgreSQL es efímera y la contraseña nunca se guarda en el repositorio.
 
 ## Responsabilidad
 
