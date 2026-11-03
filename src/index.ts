@@ -1,4 +1,5 @@
 import express from "express";
+import { requireGateway } from "./middleware/gateway";
 import { startConsumer } from "./lib/consumer";
 import { errorHandler } from "./middleware/error-handler";
 import { levelsRouter } from "./routes/levels";
@@ -6,6 +7,7 @@ import { loyaltyRouter } from "./routes/loyalty";
 import { adminRouter } from "./routes/admin";
 
 const app = express();
+app.use(requireGateway);
 app.use(express.json());
 
 app.get("/health", (req, res) => {
