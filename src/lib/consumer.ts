@@ -1,4 +1,5 @@
 import { connect } from "./broker";
+import { handleDelivery } from "./consumer-delivery";
 import { processEarn, processReversal } from "../services/loyalty.service";
 import { getBookingDetails } from "./booking-client";
 import { checkUserActive } from "./user-client";
@@ -8,7 +9,9 @@ const ROUTING_KEYS = ["payment.completed", "booking.completed", "booking.cancell
 
 export async function startConsumer() {
   const channel = await connect();
+  const deadLetterQueue = `${QUEUE_NAME}.dlq`;
   await channel.assertQueue(QUEUE_NAME, { durable: true });
+  await channel.assertQueue(deadLetterQueue, { durable: true });
   for (const key of ROUTING_KEYS) {
     await channel.bindQueue(QUEUE_NAME, "hotelsync.events", key);
   }
@@ -16,28 +19,29 @@ export async function startConsumer() {
 
   console.log(`[consumer] Escuchando en cola ${QUEUE_NAME} para ${ROUTING_KEYS.join(", ")}`);
 
-  channel.consume(QUEUE_NAME, async (msg) => {
-    if (!msg) return;
+  channel.consume(
+    QUEUE_NAME,
+    (msg) => {
+      if (!msg) return;
+      void handleDelivery(channel, QUEUE_NAME, deadLetterQueue, handleLoyaltyEvent, msg);
+    },
+    { noAck: false }
+  );
+}
 
-    try {
-      const { booking_id } = JSON.parse(msg.content.toString());
-      if (!booking_id) return channel.ack(msg);
+/** Aplica un evento del ciclo de la reserva; un mensaje sin booking_id se descarta. */
+async function handleLoyaltyEvent(routingKey: string, payload: unknown): Promise<void> {
+  const bookingId = (payload as { booking_id?: unknown } | null)?.booking_id;
+  if (typeof bookingId !== "string" || bookingId.length === 0) {
+    console.warn("[consumer] Evento sin booking_id, se descarta");
+    return;
+  }
 
-      if (msg.fields.routingKey === "booking.cancelled") {
-        await handleCancellation(booking_id);
-      } else {
-        await handleEarn(booking_id);
-      }
-      channel.ack(msg);
-    } catch (error: any) {
-      console.error("[consumer] Error procesando evento", error);
-      if (error.status === 502 || error.status === 503) {
-        setTimeout(() => channel.nack(msg, false, true), 5000);
-      } else {
-        channel.nack(msg, false, false);
-      }
-    }
-  }, { noAck: false });
+  if (routingKey === "booking.cancelled") {
+    await handleCancellation(bookingId);
+  } else {
+    await handleEarn(bookingId);
+  }
 }
 
 /** Acredita puntos al pagarse la reserva (payment.completed; booking.completed queda como respaldo idempotente). */
